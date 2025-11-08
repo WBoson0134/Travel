@@ -4,9 +4,11 @@ from backend.services.ai_service import AIService
 from backend.services.map_service import MapService
 from backend.services.price_service import PriceService
 from backend.services.export_service import ExportService
+from backend.config import Config
 from datetime import datetime, timedelta
 import json
 import io
+import requests
 
 api = Blueprint('api', __name__, url_prefix='/api')
 
@@ -257,6 +259,133 @@ def list_trips():
     """获取所有行程列表"""
     trips = Trip.query.order_by(Trip.created_at.desc()).all()
     return jsonify([trip.to_dict() for trip in trips])
+
+@api.route('/generate_trip', methods=['POST'])
+def generate_trip_new():
+    """使用阿里云百炼生成旅行计划"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # 读取 POST 请求参数
+        data = request.json
+        city = data.get('city')
+        days = data.get('days')
+        preferences = data.get('preferences', [])
+        pace = data.get('pace', '中庸')
+        transport = data.get('transport', 'driving')
+        priority = data.get('priority', '效率优先')
+        
+        # 参数验证
+        if not city or not days:
+            return jsonify({'error': 'city and days are required'}), 400
+        
+        # 拼接 prompt
+        preferences_str = ', '.join(preferences) if isinstance(preferences, list) else preferences
+        prompt = f"为用户生成一个{days}天的{city}旅行计划，兴趣偏好包括：{preferences_str}，出行节奏是{pace}，交通方式是{transport}，优先级是{priority}。返回结构化JSON。"
+        
+        # 检查配置
+        if not Config.OPENAI_API_KEY or not Config.OPENAI_BASE_URL:
+            logger.error('OPENAI_API_KEY or OPENAI_BASE_URL not configured')
+            return jsonify({'error': 'OPENAI_API_KEY and OPENAI_BASE_URL must be configured'}), 500
+        
+        # 调用阿里云百炼 API
+        api_url = f"{Config.OPENAI_BASE_URL}/services/aigc/text-generation/generation"
+        headers = {
+            'Authorization': f'Bearer {Config.OPENAI_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'model': 'qwen-turbo',
+            'input': {
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': prompt
+                    }
+                ]
+            },
+            'parameters': {
+                'temperature': 0.7,
+                'max_tokens': 2000
+            }
+        }
+        
+        try:
+            response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+            
+            # 检查响应状态码
+            if response.status_code != 200:
+                logger.error(f'AI API returned non-200 status: {response.status_code}, Response: {response.text}')
+                return jsonify({'error': 'AI generation failed'}), 500
+            
+            response.raise_for_status()
+            
+            # 解析响应
+            result = response.json()
+            
+            # 返回完整 JSON 响应
+            return jsonify(result)
+            
+        except requests.exceptions.Timeout:
+            logger.error('AI API request timeout', exc_info=True)
+            return jsonify({'error': 'AI generation failed'}), 500
+        except requests.exceptions.RequestException as e:
+            logger.error(f'AI API request failed: {str(e)}', exc_info=True)
+            return jsonify({'error': 'AI generation failed'}), 500
+        
+    except Exception as e:
+        logger.error(f'Unexpected error in generate_trip: {str(e)}', exc_info=True)
+        return jsonify({'error': 'AI generation failed'}), 500
+
+@api.route('/generate_trip_dify', methods=['POST'])
+def generate_trip_dify():
+    """使用 Dify 生成旅行计划"""
+    try:
+        # 读取 POST 请求参数
+        data = request.json
+        city = data.get('city')
+        days = data.get('days')
+        preferences = data.get('preferences', [])
+        
+        # 参数验证
+        if not city or not days:
+            return jsonify({'error': 'city and days are required'}), 400
+        
+        # 检查配置
+        if not Config.DIFY_API_KEY or not Config.DIFY_API_BASE:
+            return jsonify({'error': 'DIFY_API_KEY and DIFY_API_BASE must be configured'}), 500
+        
+        # 调用 Dify API
+        api_url = f"{Config.DIFY_API_BASE}/workflows/trigger"
+        headers = {
+            'Authorization': f'Bearer {Config.DIFY_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        # 构建请求体
+        payload = {
+            'inputs': {
+                'city': city,
+                'days': days,
+                'preferences': preferences if isinstance(preferences, list) else [preferences]
+            }
+        }
+        
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        # 解析响应
+        result = response.json()
+        
+        # 返回 Dify 的 JSON 输出
+        return jsonify(result)
+        
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': 'Failed to generate plan with Dify'}), 500
+    except Exception as e:
+        return jsonify({'error': 'Failed to generate plan with Dify'}), 500
 
 @api.route('/health', methods=['GET'])
 def health():

@@ -36,6 +36,10 @@ function App() {
             element={<TripView />} 
           />
           <Route 
+            path="/trip-result" 
+            element={<TripView />} 
+          />
+          <Route 
             path="/trip/:id/map" 
             element={<TripMap />} 
           />

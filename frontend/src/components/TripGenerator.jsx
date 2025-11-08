@@ -17,9 +17,6 @@ import {
   Alert
 } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-
-const API_BASE = '/api'
 
 function TripGenerator({ onTripGenerated }) {
   const navigate = useNavigate()
@@ -31,9 +28,11 @@ function TripGenerator({ onTripGenerated }) {
     days: 3,
     preferences: [],
     pace: '中庸',
-    transport_mode: 'driving',
+    transport: 'driving',
     priority: '效率优先'
   })
+  
+  const [trip, setTrip] = useState(null)
 
   const preferenceOptions = ['自然', '美食', '文化', '购物', '历史', '娱乐']
   const paceOptions = ['佛系', '中庸', '硬核']
@@ -58,19 +57,56 @@ function TripGenerator({ onTripGenerated }) {
     e.preventDefault()
     setLoading(true)
     setError(null)
+    setTrip(null)
 
     try {
-      const response = await axios.post(`${API_BASE}/trips/generate`, formData)
-      const trip = response.data
+      const { city, days, preferences, pace, transport, priority } = formData
       
-      if (onTripGenerated) {
-        onTripGenerated(trip)
+      const res = await fetch('/api/generate_trip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city, days, preferences, pace, transport, priority }),
+      })
+      
+      const data = await res.json()
+      
+      // 检查是否有错误
+      if (data.error) {
+        alert(`错误: ${data.error}`)
+        setError(data.error)
+        return
       }
       
-      navigate(`/trip/${trip.id}`)
+      // 更新行程显示
+      setTrip(data)
+      // 在控制台打印生成的 JSON
+      console.log('生成的行程 (JSON):', JSON.stringify(data, null, 2))
+      console.log('生成的行程 (对象):', data)
+      
+      // 将表单数据与 AI 响应合并，确保包含所有必要信息
+      const tripData = {
+        ...data,
+        city: formData.city,
+        days: formData.days,
+        pace: formData.pace,
+        transport: formData.transport,
+        priority: formData.priority,
+        preferences: formData.preferences
+      }
+      
+      // 如果有回调函数，调用它
+      if (onTripGenerated) {
+        onTripGenerated(tripData)
+      }
+      
+      // 导航到结果页面并传递 trip 数据
+      navigate('/trip-result', { state: { trip: tripData } })
+      
     } catch (err) {
-      setError(err.response?.data?.error || '生成行程失败，请重试')
-      console.error(err)
+      const errorMessage = '生成行程失败，请重试'
+      alert(`错误: ${errorMessage}`)
+      setError(errorMessage)
+      console.error('生成行程错误:', err)
     } finally {
       setLoading(false)
     }
@@ -142,9 +178,9 @@ function TripGenerator({ onTripGenerated }) {
               <FormControl fullWidth>
                 <InputLabel>交通方式</InputLabel>
                 <Select
-                  value={formData.transport_mode}
+                  value={formData.transport}
                   label="交通方式"
-                  onChange={(e) => setFormData({ ...formData, transport_mode: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, transport: e.target.value })}
                 >
                   {transportOptions.map(opt => (
                     <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
@@ -188,6 +224,27 @@ function TripGenerator({ onTripGenerated }) {
             </Grid>
           </Grid>
         </form>
+        
+        {/* 显示生成的行程结果 */}
+        {trip && (
+          <Box sx={{ mt: 4 }}>
+            <Paper elevation={2} sx={{ p: 3 }}>
+              <Typography variant="h5" gutterBottom>
+                生成的行程结果
+              </Typography>
+              <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant="body2" component="pre" sx={{ 
+                  whiteSpace: 'pre-wrap', 
+                  wordBreak: 'break-word',
+                  fontFamily: 'monospace',
+                  fontSize: '0.875rem'
+                }}>
+                  {JSON.stringify(trip, null, 2)}
+                </Typography>
+              </Box>
+            </Paper>
+          </Box>
+        )}
       </Paper>
     </Container>
   )
