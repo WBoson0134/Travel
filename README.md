@@ -137,10 +137,37 @@ OPENAI_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DIFY_API_KEY=app-xxxxxxxxxxxxxxxxxxxxx
 DIFY_API_BASE=https://api.dify.ai/v1
 
-# 其他 API 配置（可选）
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+# 外部旅游API配置（可选）
+BOOKING_API_KEY=your_booking_api_key
+AMADEUS_API_KEY=your_amadeus_api_key
+AMADEUS_API_SECRET=your_amadeus_api_secret
 TRIPADVISOR_API_KEY=your_tripadvisor_api_key
+
+# 地图API（可选）
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 ```
+
+## 架构说明
+
+### 外部API集成
+
+系统现在支持通过外部API获取旅游信息，而不是使用本地存储的数据：
+
+- **酒店搜索**：通过 Booking.com API 或 Amadeus API
+- **景点搜索**：通过 TripAdvisor API
+- **航班搜索**：通过 Amadeus API
+
+所有数据都从外部API实时获取，无需在本地维护数据。
+
+### AI助手功能
+
+系统集成了AI助手，可以：
+- 回答用户关于旅游的各种问题
+- 提供景点推荐和行程建议
+- 维护对话历史
+- 根据上下文提供个性化建议
+
+详见 [API_INTEGRATION.md](./API_INTEGRATION.md) 了解详细配置和使用方法。
 
 ## API文档
 
@@ -148,13 +175,26 @@ TRIPADVISOR_API_KEY=your_tripadvisor_api_key
 
 ### 主要端点
 
+**行程相关：**
 - `POST /api/trips/generate` - 生成行程（保存到数据库）
 - `POST /api/generate_trip` - 使用阿里云百炼生成行程（直接返回）
 - `POST /api/generate_trip_dify` - 使用 Dify 生成行程（直接返回）
+- `POST /api/generate_itinerary` - 使用外部API生成行程
 - `GET /api/trips/:id` - 获取行程详情
 - `PUT /api/trips/:id/adjust` - 调整行程
 - `GET /api/trips/:id/map` - 获取地图数据
 - `POST /api/trips/:id/export` - 导出行程
+
+**AI助手：**
+- `POST /api/ai/chat` - AI助手对话
+- `GET /api/ai/history/<user_id>` - 获取对话历史
+- `DELETE /api/ai/history/<user_id>` - 清除对话历史
+
+**外部API集成：**
+- `GET /api/travel/hotels` - 搜索酒店
+- `GET /api/travel/flights` - 搜索航班
+
+**其他：**
 - `GET /api/health` - 健康检查
 
 ### API 使用示例
