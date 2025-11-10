@@ -48,12 +48,19 @@ class OpenAICompat(LLMClient):
         # 对429错误进行指数退避重试
         import asyncio
         import random
-        max_retries = 5
+        max_retries = 2
         backoff = 1.0
         
         for attempt in range(max_retries):
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(url, headers=headers, json=payload)
+            async with httpx.AsyncClient(timeout=15) as client:
+                try:
+                    r = await client.post(url, headers=headers, json=payload)
+                except httpx.RequestError as exc:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    raise Exception(f"HTTP request failed: {exc}")
                 
                 # 检查响应状态
                 if r.status_code == 200:

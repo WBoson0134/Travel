@@ -59,58 +59,115 @@ function TripGenerator({ onTripGenerated }) {
     setError(null)
     setTrip(null)
 
+    const { city, days, preferences, pace, transport, priority } = formData
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 20000)
+
     try {
-      const { city, days, preferences, pace, transport, priority } = formData
-      
       const res = await fetch('/api/generate_trip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ city, days, preferences, pace, transport, priority }),
+        signal: controller.signal
       })
-      
+
       const data = await res.json()
-      
-      // 检查是否有错误
-      if (data.error) {
-        alert(`错误: ${data.error}`)
-        setError(data.error)
-        return
+      clearTimeout(timeoutId)
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || '生成行程失败，请重试')
       }
-      
-      // 更新行程显示
-      setTrip(data)
-      // 在控制台打印生成的 JSON
-      console.log('生成的行程 (JSON):', JSON.stringify(data, null, 2))
-      console.log('生成的行程 (对象):', data)
-      
-      // 将表单数据与 AI 响应合并，确保包含所有必要信息
-      const tripData = {
-        ...data,
-        city: formData.city,
-        days: formData.days,
-        pace: formData.pace,
-        transport: formData.transport,
-        priority: formData.priority,
-        preferences: formData.preferences
-      }
-      
-      // 如果有回调函数，调用它
-      if (onTripGenerated) {
-        onTripGenerated(tripData)
-      }
-      
-      // 导航到结果页面并传递 trip 数据
-      navigate('/trip-result', { state: { trip: tripData } })
-      
+
+      const tripData = buildTripData(data)
+      persistAndNavigate(tripData)
     } catch (err) {
-      const errorMessage = '生成行程失败，请重试'
-      alert(`错误: ${errorMessage}`)
-      setError(errorMessage)
-      console.error('生成行程错误:', err)
+      clearTimeout(timeoutId)
+
+      if (err.name === 'AbortError') {
+        console.warn('AI 生成超时，使用快速方案', err)
+        await generateFallbackPlan({ city, days, preferences, pace, transport, priority })
+      } else {
+        const errorMessage = err.message || '生成行程失败，请重试'
+        alert(`错误: ${errorMessage}`)
+        setError(errorMessage)
+        console.error('生成行程错误:', err)
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  const buildTripData = (rawData, extra = {}) => {
+    const merged = {
+      ...rawData,
+      city: rawData.city || formData.city,
+      pace: rawData.pace || formData.pace,
+      transport: rawData.transport || formData.transport,
+      priority: rawData.priority || formData.priority,
+      preferences: rawData.preferences || formData.preferences,
+      requested_days: formData.days,
+      ...extra
+    }
+
+    if (Array.isArray(rawData.days)) {
+      merged.days = rawData.days
+    }
+
+    return merged
+  }
+
+  const persistAndNavigate = (tripData, options = {}) => {
+    setTrip(tripData)
+    console.log('生成的行程 (JSON):', JSON.stringify(tripData, null, 2))
+    console.log('生成的行程 (对象):', tripData)
+
+    if (onTripGenerated) {
+      onTripGenerated(tripData)
+    }
+
+    try {
+      sessionStorage.setItem('latestTripPlan', JSON.stringify(tripData))
+    } catch (err) {
+      console.warn('无法写入 sessionStorage:', err)
+    }
+
+    if (options.notice) {
+      alert(options.notice)
+    }
+
+    navigate('/trip-result', { state: { trip: tripData } })
+  }
+
+  const generateFallbackPlan = async ({ city, days, preferences, pace, transport, priority }) => {
+    try {
+      const res = await fetch('/api/generate_itinerary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          city,
+          days,
+          preferences,
+          pace,
+          transport_mode: transport
+        })
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || '快速方案生成失败，请稍后再试')
+      }
+
+      const fallbackTrip = buildTripData(data, { source: 'fallback' })
+      persistAndNavigate(fallbackTrip, { notice: 'AI 响应较慢，已为您生成基础方案。' })
+    } catch (error) {
+      const message = error.message || '快速方案生成失败，请稍后再试'
+      alert(`错误: ${message}`)
+      setError(message)
+      console.error('快速方案生成失败:', error)
+    }
+  }
+
 
   return (
     <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>

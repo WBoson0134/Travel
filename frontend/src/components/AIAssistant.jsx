@@ -78,9 +78,9 @@ function AIAssistant() {
       // 使用新的FastAPI接口
       // 默认使用 openai，如果没有配置则让后端自动选择
       const payload = {
-        provider: 'openai', // 使用 OpenAI（可以从设置中获取用户选择的默认提供商）
-        model: 'gpt-4o-mini', // 使用 gpt-4o-mini（更便宜且可用）
-        messages: messageHistory
+        user_id: userId,
+        message: messageToSend,
+        context: {}
       }
       
       const response = await fetch(`${API_BASE}/ai/chat`, {
@@ -93,15 +93,15 @@ function AIAssistant() {
 
       const data = await response.json()
 
-      if (data.detail) {
-        throw new Error(data.detail)
+      if (!response.ok) {
+        throw new Error(data.error || data.detail || 'AI 助手请求失败')
       }
 
       // 添加AI回复
       const assistantMessage = {
         role: 'assistant',
-        content: data.answer || '抱歉，我无法理解您的问题。',
-        suggestions: []
+        content: data.reply || data.answer || '抱歉，我无法理解您的问题。',
+        suggestions: data.suggestions || []
       }
       setMessages(prev => [...prev, assistantMessage])
       setSuggestions(assistantMessage.suggestions)

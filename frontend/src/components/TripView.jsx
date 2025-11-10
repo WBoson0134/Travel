@@ -42,25 +42,47 @@ function TripView() {
   const [adjustRequirements, setAdjustRequirements] = useState('')
   const [parsedTrip, setParsedTrip] = useState(null)
 
-  useEffect(() => {
-    // 如果从 location state 中获取了 trip 数据，直接使用
-    if (location.state?.trip) {
-      const tripData = location.state.trip
-      const parsed = parseAITripResponse(tripData)
+useEffect(() => {
+  const useTripData = (tripData, options = {}) => {
+    const parsed = parseAITripResponse(tripData)
+    if (parsed) {
       setParsedTrip(parsed)
       setTrip(parsed)
-      // 在控制台打印解析后的行程 JSON
+      if (options.notice) {
+        alert(options.notice)
+      }
       console.log('解析后的行程 (JSON):', JSON.stringify(parsed, null, 2))
       console.log('解析后的行程 (对象):', parsed)
       setLoading(false)
-    } else if (id) {
-      // 否则从 API 获取
-      fetchTrip()
-    } else {
-      // 如果没有 id 也没有 state，显示生成中
-      setLoading(false)
+      return true
     }
-  }, [id, location.state])
+    return false
+  }
+
+  if (location.state?.trip) {
+    if (useTripData(location.state.trip)) {
+      return
+    }
+  } else {
+    const cached = sessionStorage.getItem('latestTripPlan')
+    if (cached) {
+      try {
+        const tripData = JSON.parse(cached)
+        if (useTripData(tripData, { notice: '已加载最近生成的行程。' })) {
+          return
+        }
+      } catch (err) {
+        console.warn('无法解析缓存的行程数据', err)
+      }
+    }
+  }
+
+  if (id) {
+    fetchTrip()
+  } else {
+    setLoading(false)
+  }
+}, [id, location.state])
 
   // 解析 AI 返回的 trip 数据
   const parseAITripResponse = (aiResponse) => {

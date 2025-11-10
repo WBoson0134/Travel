@@ -2,6 +2,7 @@ import json
 import os
 from typing import List, Dict, Optional
 from math import radians, sin, cos, sqrt, atan2
+from pathlib import Path
 from backend.services.travel_api_service import TravelAPIService
 import logging
 
@@ -21,7 +22,10 @@ class POIService:
         attractions = self.travel_api_service.search_attractions(city, preferences)
         
         if not attractions:
-            logger.warning(f"无法从外部API获取{city}的景点信息")
+            logger.warning(f"无法从外部API获取{city}的景点信息，尝试使用内置POI数据")
+            attractions = self._load_local_pois(city)
+        
+        if not attractions:
             return []
         
         # 如果没有偏好，返回所有景点
@@ -42,7 +46,25 @@ class POIService:
         
         # 如果没有匹配的，返回所有POI
         return filtered_pois if filtered_pois else attractions
-    
+
+    def _load_local_pois(self, city: str) -> List[Dict]:
+        """从本地数据集中加载POI，作为外部API的回退方案"""
+        data_path = Path(__file__).resolve().parent.parent / 'data' / 'poi_data.json'
+        if not data_path.exists():
+            return []
+        try:
+            with open(data_path, 'r', encoding='utf-8') as fp:
+                data = json.load(fp)
+            normalized = city.strip()
+            candidates = [normalized, normalized.title(), normalized.lower(), normalized.upper()]
+            for key in candidates:
+                if key in data:
+                    return data[key]
+            return []
+        except Exception as exc:
+            logger.error('加载本地POI数据失败: %s', exc)
+            return []
+
     def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """使用Haversine公式计算两点间距离（公里）"""
         R = 6371  # 地球半径（公里）

@@ -17,6 +17,7 @@ from pydantic import ValidationError
 import json
 import io
 import requests
+import logging
 
 api = Blueprint('api', __name__, url_prefix='/api')
 
@@ -273,135 +274,36 @@ def list_trips():
 
 @api.route('/generate_trip', methods=['POST'])
 def generate_trip_new():
-    """使用阿里云百炼生成旅行计划"""
+    """使用 AI + 内部服务生成旅行计划"""
     import logging
     logger = logging.getLogger(__name__)
-    
+
     try:
-        # 读取 POST 请求参数
-        data = request.json
+        data = request.json or {}
         city = data.get('city')
         days = data.get('days')
         preferences = data.get('preferences', [])
         pace = data.get('pace', '中庸')
-        transport = data.get('transport', 'driving')
+        transport = data.get('transport') or data.get('transport_mode', 'driving')
         priority = data.get('priority', '效率优先')
-        
-        # 参数验证
+
         if not city or not days:
             return jsonify({'error': 'city and days are required'}), 400
-        
-        # 拼接 prompt
-        preferences_str = ', '.join(preferences) if isinstance(preferences, list) else preferences
-        prompt = f"为用户生成一个{days}天的{city}旅行计划，兴趣偏好包括：{preferences_str}，出行节奏是{pace}，交通方式是{transport}，优先级是{priority}。返回结构化JSON。"
-        
-        # 检查配置
-        if not Config.OPENAI_API_KEY or not Config.OPENAI_BASE_URL:
-            logger.warning('OPENAI_API_KEY or OPENAI_BASE_URL not configured, using mock data')
-            # 返回模拟数据以便测试
-            mock_response = {
-                "output": {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps({
-                                    "days": [
-                                        {
-                                            "day_number": 1,
-                                            "description": f"第1天：探索{city}的精彩",
-                                            "activities": [
-                                                {
-                                                    "name": f"{city}著名景点1",
-                                                    "type": preferences[0] if preferences else "文化",
-                                                    "address": f"{city}市中心",
-                                                    "start_time": "09:00",
-                                                    "end_time": "12:00",
-                                                    "duration_minutes": 180,
-                                                    "description": f"这是{city}的一个著名景点，值得一游。",
-                                                    "tags": ["推荐", "热门"],
-                                                    "price_range": "$$",
-                                                    "price_estimate": 50.0,
-                                                    "order": 1
-                                                }
-                                            ]
-                                        },
-                                        {
-                                            "day_number": 2,
-                                            "description": f"第2天：继续探索{city}",
-                                            "activities": [
-                                                {
-                                                    "name": f"{city}著名景点2",
-                                                    "type": preferences[1] if len(preferences) > 1 else "美食",
-                                                    "address": f"{city}市中心",
-                                                    "start_time": "10:00",
-                                                    "end_time": "13:00",
-                                                    "duration_minutes": 180,
-                                                    "description": f"这是{city}的另一个著名景点。",
-                                                    "tags": ["推荐"],
-                                                    "price_range": "$$",
-                                                    "price_estimate": 60.0,
-                                                    "order": 1
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                }, ensure_ascii=False)
-                            }
-                        }
-                    ]
-                }
-            }
-            return jsonify(mock_response)
-        
-        # 调用阿里云百炼 API
-        api_url = f"{Config.OPENAI_BASE_URL}/services/aigc/text-generation/generation"
-        headers = {
-            'Authorization': f'Bearer {Config.OPENAI_API_KEY}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            'model': 'qwen-turbo',
-            'input': {
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ]
-            },
-            'parameters': {
-                'temperature': 0.7,
-                'max_tokens': 2000
-            }
-        }
-        
-        try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-            
-            # 检查响应状态码
-            if response.status_code != 200:
-                logger.error(f'AI API returned non-200 status: {response.status_code}, Response: {response.text}')
-                return jsonify({'error': 'AI generation failed'}), 500
-            
-            response.raise_for_status()
-            
-            # 解析响应
-            result = response.json()
-            
-            # 返回完整 JSON 响应
-            return jsonify(result)
-            
-        except requests.exceptions.Timeout:
-            logger.error('AI API request timeout', exc_info=True)
-            return jsonify({'error': 'AI generation failed'}), 500
-        except requests.exceptions.RequestException as e:
-            logger.error(f'AI API request failed: {str(e)}', exc_info=True)
-            return jsonify({'error': 'AI generation failed'}), 500
-        
-    except Exception as e:
-        logger.error(f'Unexpected error in generate_trip: {str(e)}', exc_info=True)
-        return jsonify({'error': 'AI generation failed'}), 500
+
+        plan = ai_service.generate_trip_plan(
+            city=city,
+            days=int(days),
+            preferences=preferences,
+            pace=pace,
+            transport_mode=transport,
+            priority=priority
+        )
+        return jsonify(plan), 200
+
+    except Exception as exc:
+        logger.error('生成行程失败: %s', exc, exc_info=True)
+        return jsonify({'error': 'Failed to generate plan'}), 500
+
 
 @api.route('/generate_trip_dify', methods=['POST'])
 def generate_trip_dify():
