@@ -25,6 +25,8 @@ class Config:
     
     # 地图API
     GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
+    GEOAPIFY_API_KEY = os.getenv('GEOAPIFY_API_KEY')
+    GEOAPIFY_API_URL = os.getenv('GEOAPIFY_API_URL', 'https://api.geoapify.com/v1')
     
     # CORS
     CORS_ORIGINS = ['http://localhost:3000', 'http://localhost:5173']
