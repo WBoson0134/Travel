@@ -12,6 +12,7 @@ flask db init 2>/dev/null || true
 flask db migrate -m "Initial migration" 2>/dev/null || true
 flask db upgrade
 
-# 运行后端服务器
-python backend/app.py
+# 运行后端服务器（FastAPI）
+# 如果需要运行Flask应用，使用: python backend/app_flask.py
+uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
 

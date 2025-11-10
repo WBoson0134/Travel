@@ -6,6 +6,8 @@ import TripGenerator from './components/TripGenerator'
 import TripView from './components/TripView'
 import TripMap from './components/TripMap'
 import Navbar from './components/Navbar'
+import AIAssistant from './components/AIAssistant'
+import Settings from './components/Settings'
 
 const theme = createTheme({
   palette: {
@@ -42,6 +44,14 @@ function App() {
           <Route 
             path="/trip/:id/map" 
             element={<TripMap />} 
+          />
+          <Route 
+            path="/ai-assistant" 
+            element={<AIAssistant />} 
+          />
+          <Route 
+            path="/settings" 
+            element={<Settings />} 
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -649,6 +649,44 @@ def search_flights():
             error=f'搜索航班失败: {str(e)}'
         ).model_dump()), 500
 
+@api.route('/config/status', methods=['GET'])
+def get_config_status():
+    """获取配置状态（不返回实际密钥，只返回是否配置）"""
+    try:
+        status = {
+            'ai': {
+                'openai': {
+                    'configured': bool(Config.OPENAI_API_KEY),
+                    'base_url': Config.OPENAI_BASE_URL if Config.OPENAI_BASE_URL else None
+                },
+                'dify': {
+                    'configured': bool(Config.DIFY_API_KEY),
+                    'base_url': Config.DIFY_API_BASE if Config.DIFY_API_BASE else None
+                }
+            },
+            'travel_apis': {
+                'booking': {
+                    'configured': bool(Config.BOOKING_API_KEY)
+                },
+                'amadeus': {
+                    'configured': bool(Config.AMADEUS_API_KEY and Config.AMADEUS_API_SECRET)
+                },
+                'tripadvisor': {
+                    'configured': bool(Config.TRIPADVISOR_API_KEY)
+                }
+            },
+            'maps': {
+                'google_maps': {
+                    'configured': bool(Config.GOOGLE_MAPS_API_KEY)
+                }
+            }
+        }
+        return jsonify(status), 200
+    except Exception as e:
+        return jsonify(ErrorResponse(
+            error=f'获取配置状态失败: {str(e)}'
+        ).model_dump()), 500
+
 @api.route('/health', methods=['GET'])
 def health():
     """健康检查"""

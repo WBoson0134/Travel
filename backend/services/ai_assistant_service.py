@@ -1,12 +1,11 @@
 """
 AI助手服务
 用于处理客户问题和交互
+使用新的LLM服务架构
 """
-import os
-import json
-import requests
+import asyncio
 from typing import List, Dict, Optional
-from backend.config import Config
+from backend.services.llm import pick_client, Message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,13 +15,16 @@ class AIAssistantService:
     """AI助手服务：处理客户问答和交互"""
     
     def __init__(self):
-        self.openai_api_key = Config.OPENAI_API_KEY
-        self.openai_base_url = Config.OPENAI_BASE_URL
-        self.dify_api_key = Config.DIFY_API_KEY
-        self.dify_api_base = Config.DIFY_API_BASE
+        # 使用新的LLM服务
+        try:
+            self.llm_client = pick_client()
+            logger.info(f"使用LLM提供商: {self.llm_client.name}")
+        except RuntimeError as e:
+            logger.warning(f"LLM客户端初始化失败: {e}")
+            self.llm_client = None
         
         # 对话历史存储（实际应用中应使用数据库或Redis）
-        self.conversation_history: Dict[str, List[Dict]] = {}
+        self.conversation_history: Dict[str, List[Message]] = {}
     
     def chat(self, user_id: str, message: str, context: Dict = None) -> Dict:
         """
@@ -51,20 +53,23 @@ class AIAssistantService:
         
         # 调用AI服务
         try:
-            if self.openai_api_key and self.openai_base_url:
-                response = self._chat_with_openai(user_id, system_prompt)
-            elif self.dify_api_key and self.dify_api_base:
-                response = self._chat_with_dify(user_id, message, context)
+            if self.llm_client:
+                # 使用新的LLM服务
+                messages = self._build_messages(user_id, system_prompt)
+                reply = asyncio.run(self.llm_client.chat(messages))
             else:
-                response = self._chat_fallback(message, context)
+                reply = self._chat_fallback(message, context).get("reply", "")
             
             # 添加AI回复到历史
             self.conversation_history[user_id].append({
                 "role": "assistant",
-                "content": response.get("reply", "")
+                "content": reply
             })
             
-            return response
+            return {
+                "reply": reply,
+                "suggestions": self._extract_suggestions(reply)
+            }
             
         except Exception as e:
             logger.error(f"AI助手服务错误: {e}")
@@ -98,10 +103,9 @@ class AIAssistantService:
         
         return prompt
     
-    def _chat_with_openai(self, user_id: str, system_prompt: str) -> Dict:
-        """使用OpenAI API进行对话"""
-        # 构建消息列表
-        messages = [
+    def _build_messages(self, user_id: str, system_prompt: str) -> List[Message]:
+        """构建消息列表"""
+        messages: List[Message] = [
             {"role": "system", "content": system_prompt}
         ]
         
@@ -109,88 +113,7 @@ class AIAssistantService:
         history = self.conversation_history[user_id][-20:]  # 最近20条消息
         messages.extend(history)
         
-        # 调用OpenAI API
-        if "dashscope" in (self.openai_base_url or ""):
-            # 阿里云百炼API
-            return self._chat_with_dashscope(messages)
-        else:
-            # 标准OpenAI API
-            from openai import OpenAI
-            client = OpenAI(
-                api_key=self.openai_api_key,
-                base_url=self.openai_base_url
-            )
-            
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=500
-            )
-            
-            reply = response.choices[0].message.content
-            
-            return {
-                "reply": reply,
-                "suggestions": self._extract_suggestions(reply)
-            }
-    
-    def _chat_with_dashscope(self, messages: List[Dict]) -> Dict:
-        """使用阿里云百炼API进行对话"""
-        api_url = f"{self.openai_base_url}/services/aigc/text-generation/generation"
-        headers = {
-            'Authorization': f'Bearer {self.openai_api_key}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            'model': 'qwen-turbo',
-            'input': {
-                'messages': messages
-            },
-            'parameters': {
-                'temperature': 0.7,
-                'max_tokens': 500
-            }
-        }
-        
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        
-        result = response.json()
-        reply = result.get('output', {}).get('choices', [{}])[0].get('message', {}).get('content', '')
-        
-        return {
-            "reply": reply,
-            "suggestions": self._extract_suggestions(reply)
-        }
-    
-    def _chat_with_dify(self, user_id: str, message: str, context: Dict = None) -> Dict:
-        """使用Dify API进行对话"""
-        api_url = f"{self.dify_api_base}/chat-messages"
-        headers = {
-            'Authorization': f'Bearer {self.dify_api_key}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            'inputs': context or {},
-            'query': message,
-            'response_mode': 'blocking',
-            'conversation_id': user_id,
-            'user': user_id
-        }
-        
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        
-        result = response.json()
-        reply = result.get('answer', '')
-        
-        return {
-            "reply": reply,
-            "suggestions": self._extract_suggestions(reply)
-        }
+        return messages
     
     def _chat_fallback(self, message: str, context: Dict = None) -> Dict:
         """回退方案：简单的关键词匹配"""
@@ -237,7 +160,6 @@ class AIAssistantService:
         if user_id in self.conversation_history:
             del self.conversation_history[user_id]
     
-    def get_history(self, user_id: str) -> List[Dict]:
+    def get_history(self, user_id: str) -> List[Message]:
         """获取用户的对话历史"""
         return self.conversation_history.get(user_id, [])
-

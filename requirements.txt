@@ -12,3 +12,10 @@ googlemaps==4.10.0
 pydantic==2.5.0
 python-dateutil==2.8.2
 
+# FastAPI相关依赖
+fastapi
+uvicorn[standard]
+httpx
+orjson
+cssutils
+

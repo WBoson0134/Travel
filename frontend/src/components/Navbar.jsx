@@ -19,6 +19,20 @@ function Navbar() {
         >
           生成行程
         </Button>
+        <Button 
+          color="inherit" 
+          onClick={() => navigate('/ai-assistant')}
+          variant={location.pathname === '/ai-assistant' ? 'outlined' : 'text'}
+        >
+          AI助手
+        </Button>
+        <Button 
+          color="inherit" 
+          onClick={() => navigate('/settings')}
+          variant={location.pathname === '/settings' ? 'outlined' : 'text'}
+        >
+          设置
+        </Button>
       </Toolbar>
     </AppBar>
   )
