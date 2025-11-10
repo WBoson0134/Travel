@@ -19,3 +19,4 @@ httpx
 orjson
 cssutils
 
+git+https://github.com/modelcontextprotocol/python.git#egg=model-context-protocol
