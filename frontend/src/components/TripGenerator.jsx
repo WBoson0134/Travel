@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   Container,
   Paper,
@@ -12,9 +12,10 @@ import {
   Box,
   Typography,
   Grid,
-  Slider,
   CircularProgress,
-  Alert
+  Alert,
+  Backdrop,
+  LinearProgress
 } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
 
@@ -33,6 +34,9 @@ function TripGenerator({ onTripGenerated }) {
   })
   
   const [trip, setTrip] = useState(null)
+  const [showProgress, setShowProgress] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const progressTimerRef = useRef(null)
 
   const preferenceOptions = ['自然', '美食', '文化', '购物', '历史', '娱乐']
   const paceOptions = ['佛系', '中庸', '硬核']
@@ -58,21 +62,29 @@ function TripGenerator({ onTripGenerated }) {
     setLoading(true)
     setError(null)
     setTrip(null)
+    startProgress()
 
     const { city, days, preferences, pace, transport, priority } = formData
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 20000)
-
     try {
       const res = await fetch('/api/generate_trip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ city, days, preferences, pace, transport, priority }),
-        signal: controller.signal
+        body: JSON.stringify({ city, days, preferences, pace, transport, priority })
       })
 
-      const data = await res.json()
-      clearTimeout(timeoutId)
+      const rawText = await res.text()
+
+      if (!rawText) {
+        throw new Error('服务器没有返回任何数据')
+      }
+
+      let data
+      try {
+        data = JSON.parse(rawText)
+      } catch (parseErr) {
+        console.error('解析生成行程响应失败:', parseErr, rawText)
+        throw new Error('响应格式异常，请稍后重试')
+      }
 
       if (!res.ok || data.error) {
         throw new Error(data.error || '生成行程失败，请重试')
@@ -81,17 +93,11 @@ function TripGenerator({ onTripGenerated }) {
       const tripData = buildTripData(data)
       persistAndNavigate(tripData)
     } catch (err) {
-      clearTimeout(timeoutId)
-
-      if (err.name === 'AbortError') {
-        console.warn('AI 生成超时，使用快速方案', err)
-        await generateFallbackPlan({ city, days, preferences, pace, transport, priority })
-      } else {
-        const errorMessage = err.message || '生成行程失败，请重试'
-        alert(`错误: ${errorMessage}`)
-        setError(errorMessage)
-        console.error('生成行程错误:', err)
-      }
+      const errorMessage = err.message || '生成行程失败，请重试'
+      console.error('生成行程错误:', err)
+      setError(errorMessage)
+      alert(`错误: ${errorMessage}`)
+      failProgress()
     } finally {
       setLoading(false)
     }
@@ -120,6 +126,7 @@ function TripGenerator({ onTripGenerated }) {
     setTrip(tripData)
     console.log('生成的行程 (JSON):', JSON.stringify(tripData, null, 2))
     console.log('生成的行程 (对象):', tripData)
+    finishProgress()
 
     if (onTripGenerated) {
       onTripGenerated(tripData)
@@ -138,35 +145,49 @@ function TripGenerator({ onTripGenerated }) {
     navigate('/trip-result', { state: { trip: tripData } })
   }
 
-  const generateFallbackPlan = async ({ city, days, preferences, pace, transport, priority }) => {
-    try {
-      const res = await fetch('/api/generate_itinerary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          city,
-          days,
-          preferences,
-          pace,
-          transport_mode: transport
-        })
-      })
-
-      const data = await res.json()
-
-      if (!res.ok || data.error) {
-        throw new Error(data.error || '快速方案生成失败，请稍后再试')
-      }
-
-      const fallbackTrip = buildTripData(data, { source: 'fallback' })
-      persistAndNavigate(fallbackTrip, { notice: 'AI 响应较慢，已为您生成基础方案。' })
-    } catch (error) {
-      const message = error.message || '快速方案生成失败，请稍后再试'
-      alert(`错误: ${message}`)
-      setError(message)
-      console.error('快速方案生成失败:', error)
+  const startProgress = () => {
+    setShowProgress(true)
+    setProgress(5)
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current)
     }
+    progressTimerRef.current = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 95) return prev
+        const increment = Math.random() * 10 + 3
+        return Math.min(prev + increment, 95)
+      })
+    }, 700)
   }
+
+  const finishProgress = () => {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current)
+      progressTimerRef.current = null
+    }
+    setProgress(100)
+    setTimeout(() => {
+      setShowProgress(false)
+      setProgress(0)
+    }, 500)
+  }
+
+  const failProgress = () => {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current)
+      progressTimerRef.current = null
+    }
+    setShowProgress(false)
+    setProgress(0)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) {
+        clearInterval(progressTimerRef.current)
+      }
+    }
+  }, [])
 
 
   return (
@@ -303,6 +324,21 @@ function TripGenerator({ onTripGenerated }) {
           </Box>
         )}
       </Paper>
+
+      <Backdrop
+        open={showProgress}
+        sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1 }}
+      >
+        <Box sx={{ width: 320, p: 4, bgcolor: 'rgba(0,0,0,0.7)', borderRadius: 2, textAlign: 'center' }}>
+          <Typography variant="h6" gutterBottom>
+            AI 正在生成行程…
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            这可能需要一些时间，请耐心等待。
+          </Typography>
+          <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4 }} />
+        </Box>
+      </Backdrop>
     </Container>
   )
 }

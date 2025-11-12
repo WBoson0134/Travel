@@ -65,6 +65,60 @@ class POIService:
             logger.error('加载本地POI数据失败: %s', exc)
             return []
 
+    def _generate_placeholder_itinerary(self, city: str, days: int, pace: str, transport_mode: str) -> Dict:
+        """生成占位行程，供 AI 后续优化。"""
+        pace = pace or '中庸'
+        activities_per_day = {
+            '佛系': 2,
+            '中庸': 3,
+            '硬核': 4
+        }.get(pace, 3)
+
+        itinerary = {
+            'city': city,
+            'total_days': days,
+            'pace': pace,
+            'transport_mode': transport_mode,
+            'source': 'placeholder',
+            'notice': f'未找到{city}的POI数据，已生成占位行程供AI优化',
+            'days': []
+        }
+
+        for day in range(1, days + 1):
+            current_time = 9 * 60
+            activities = []
+            for idx in range(activities_per_day):
+                start_hour = current_time // 60
+                start_minute = current_time % 60
+                end_time = current_time + 90
+                end_hour = end_time // 60
+                end_minute = end_time % 60
+                activities.append({
+                    'name': f'{city} 精选体验 {idx + 1}',
+                    'type': '体验',
+                    'address': '',
+                    'latitude': None,
+                    'longitude': None,
+                    'start_time': f"{start_hour:02d}:{start_minute:02d}",
+                    'end_time': f"{end_hour:02d}:{end_minute:02d}",
+                    'duration_minutes': 90,
+                    'description': '占位活动，等待AI进一步优化。',
+                    'rating': 4.5,
+                    'price_range': '$$',
+                    'price_estimate': 80,
+                    'tags': ['待优化'],
+                    'order': idx + 1
+                })
+                current_time = end_time + 30
+
+            itinerary['days'].append({
+                'day_number': day,
+                'description': f'{city} 第{day}天占位行程，等待AI优化。',
+                'activities': activities
+            })
+
+        return itinerary
+
     def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """使用Haversine公式计算两点间距离（公里）"""
         R = 6371  # 地球半径（公里）
@@ -119,10 +173,8 @@ class POIService:
         pois = self.get_pois_by_city(city, preferences)
         
         if not pois:
-            return {
-                'error': f'未找到{city}的POI数据',
-                'days': []
-            }
+            logger.warning(f"未找到{city}的POI数据，使用占位行程")
+            return self._generate_placeholder_itinerary(city, int(days) if days else 1, pace, transport_mode)
         
         # 根据节奏决定每天的活动数量
         activities_per_day = {

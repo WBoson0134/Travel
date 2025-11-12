@@ -33,19 +33,20 @@ from typing import List
 
 
 try:
-    from mcp.server import Server
+    from mcp.server.fastmcp import FastMCP
 except ImportError as exc:
     raise ImportError(
-        "model-context-protocol package not found. Install via "pip install git+https://github.com/modelcontextprotocol/python.git#egg=model-context-protocol""
+        'model-context-protocol package not found. Install via '
+        '"pip install git+https://github.com/modelcontextprotocol/python.git#egg=model-context-protocol"'
     ) from exc
 
-from backend.services.poi_service import POIService
+from backend.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-server = Server(name="travel-mcp")
-poi_service = POIService()
+server = FastMCP("travel-mcp")
+ai_service = AIService()
 
 
 def _parse_preferences(preferences: str | List[str] | None) -> List[str]:
@@ -63,8 +64,9 @@ async def generate_itinerary(
     preferences: str | List[str] | None = None,
     pace: str = "中庸",
     transport_mode: str = "driving",
+    priority: str = "效率优先",
 ) -> str:
-    """Generate a draft itinerary using the local POI service.
+    """Generate an itinerary using the full AI service.
 
     Parameters
     ----------
@@ -86,12 +88,13 @@ async def generate_itinerary(
     """
     logger.info("MCP tool generate_itinerary called: city=%s, days=%s", city, days)
     pref_list = _parse_preferences(preferences)
-    itinerary = poi_service.generate_itinerary(
+    itinerary = ai_service.generate_trip_plan(
         city=city,
         days=int(days),
         preferences=pref_list,
         pace=pace,
         transport_mode=transport_mode,
+        priority=priority,
     )
     return json.dumps(itinerary, ensure_ascii=False)
 

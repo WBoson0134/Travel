@@ -7,6 +7,7 @@ from backend.services.export_service import ExportService
 from backend.services.poi_service import POIService
 from backend.services.travel_api_service import TravelAPIService
 from backend.services.ai_assistant_service import AIAssistantService
+from backend.services.mcp_client import MCPClient
 from backend.schemas import (
     ItineraryRequest, ItineraryResponse, ErrorResponse,
     ActivityResponse, DayPlanResponse
@@ -28,6 +29,7 @@ export_service = ExportService()
 poi_service = POIService()
 travel_api_service = TravelAPIService()
 ai_assistant_service = AIAssistantService()
+mcp_client = MCPClient()
 
 @api.route('/trips/generate', methods=['POST'])
 def generate_trip():
@@ -290,6 +292,24 @@ def generate_trip_new():
         if not city or not days:
             return jsonify({'error': 'city and days are required'}), 400
 
+        base_plan = mcp_client.generate_itinerary(
+            city=city,
+            days=int(days),
+            preferences=preferences,
+            pace=pace,
+            transport_mode=transport,
+            priority=priority
+        )
+
+        base_plan.setdefault('city', city)
+        base_plan.setdefault('days_count', int(days))
+        base_plan['llm_enhanced'] = False
+        base_plan['source'] = 'mcp'
+
+        enhanced = bool(data.get('enhanced'))
+        if not enhanced:
+            return jsonify(base_plan), 200
+
         plan = ai_service.generate_trip_plan(
             city=city,
             days=int(days),
@@ -298,10 +318,19 @@ def generate_trip_new():
             transport_mode=transport,
             priority=priority
         )
+        plan['llm_enhanced'] = True
+        plan['source'] = 'llm'
+        plan.setdefault('base_itinerary', base_plan)
         return jsonify(plan), 200
 
     except Exception as exc:
         logger.error('生成行程失败: %s', exc, exc_info=True)
+        fallback = base_plan if 'base_plan' in locals() else {'error': 'Failed to generate plan'}
+        if isinstance(fallback, dict):
+            fallback.setdefault('llm_enhanced', False)
+            fallback.setdefault('source', 'mcp-fallback')
+            fallback.setdefault('notice', 'AI generation failed, returning base itinerary')
+            return jsonify(fallback), 200
         return jsonify({'error': 'Failed to generate plan'}), 500
 
 

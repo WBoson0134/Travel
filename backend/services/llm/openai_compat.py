@@ -42,8 +42,10 @@ class OpenAICompat(LLMClient):
             payload = {
                 "model": use_model,
                 "messages": messages,
-                "temperature": temperature
+                "temperature": temperature,
             }
+            if "openai.com" in self.base_url:
+                payload["response_format"] = {"type": "json_object"}
         
         # 对429错误进行指数退避重试
         import asyncio
