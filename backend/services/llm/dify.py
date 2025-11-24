@@ -15,7 +15,7 @@ class DifyClient(LLMClient):
         self.app_user = app_user
 
     async def chat(self, messages: List[Message], model: str | None = None,
-                   temperature: float = 0.7) -> str:
+                   temperature: float = 0.7, force_json: bool = False) -> str:
         # 取最后一条 user 内容作为 query，其余拼成上下文（简化版）
         last_user = ""
         context = []

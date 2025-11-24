@@ -11,7 +11,7 @@ class OpenAICompat(LLMClient):
         self.default_model = default_model
 
     async def chat(self, messages: List[Message], model: str | None = None,
-                   temperature: float = 0.7) -> str:
+                   temperature: float = 0.7, force_json: bool = False) -> str:
         use_model = model or self.default_model
         
         # 处理阿里云百炼的特殊路径
@@ -44,7 +44,8 @@ class OpenAICompat(LLMClient):
                 "messages": messages,
                 "temperature": temperature,
             }
-            if "openai.com" in self.base_url:
+            # 只在明确要求JSON格式时使用（并且提示词中需要包含"json"）
+            if force_json and "openai.com" in self.base_url:
                 payload["response_format"] = {"type": "json_object"}
         
         # 对429错误进行指数退避重试

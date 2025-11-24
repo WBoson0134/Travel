@@ -199,7 +199,7 @@ class AIService:
             f"用户需求: {new_requirements}"
         )
         try:
-            reply = self._chat(system_prompt, user_prompt)
+            reply = self._chat(system_prompt, user_prompt, force_json=True)
             adjusted = self._safe_parse_json(reply)
             if 'days' not in adjusted:
                 raise ValueError('调整结果缺少 days 字段')
@@ -223,7 +223,7 @@ class AIService:
             "{\"rating\": 4.6, \"tags\": [\"标签\"], \"summary\": \"一句话摘要\"}"
         )
         try:
-            reply = self._chat(system_prompt, user_prompt, temperature=0.6)
+            reply = self._chat(system_prompt, user_prompt, temperature=0.6, force_json=True)
             summary = self._safe_parse_json(reply)
             return {
                 "rating": summary.get("rating", default["rating"]),
@@ -314,7 +314,7 @@ class AIService:
                 "并仅以 JSON 对象形式返回。"
             )
 
-        response_text = self._chat(system_prompt, user_prompt, temperature=0.55)
+        response_text = self._chat(system_prompt, user_prompt, temperature=0.55, force_json=True)
         try:
             meta = self._safe_parse_json(response_text)
         except Exception as parse_exc:
@@ -404,7 +404,7 @@ class AIService:
                 " 当前活动为占位，请结合城市和偏好设计真实的体验，并补充吸引人的描述、贴士与价格建议。"
             )
 
-        response_text = self._chat(system_prompt, user_prompt, temperature=0.6)
+        response_text = self._chat(system_prompt, user_prompt, temperature=0.6, force_json=True)
         try:
             result = self._safe_parse_json(response_text)
         except Exception as parse_exc:
@@ -419,7 +419,7 @@ class AIService:
         result.setdefault("day_number", day.get("day_number"))
         return result
 
-    def _chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
+    def _chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, force_json: bool = False) -> str:
         if not self.llm_client:
             raise RuntimeError("LLM client is not configured")
         messages = [
@@ -427,7 +427,7 @@ class AIService:
             {"role": "user", "content": user_prompt}
         ]
         start_time = time.time()
-        result = asyncio.run(self.llm_client.chat(messages, temperature=temperature))
+        result = asyncio.run(self.llm_client.chat(messages, temperature=temperature, force_json=force_json))
         self.logger.info("LLM chat completed in %.2fs", time.time() - start_time)
         return result
 
