@@ -11,10 +11,31 @@ class MapService:
         self.geoapify_key = Config.GEOAPIFY_API_KEY
         self.geoapify_url = Config.GEOAPIFY_API_URL or "https://api.geoapify.com/v1"
         self.geocoder = Nominatim(user_agent="travel_planner")
+        
+        # 尝试使用 MCP 客户端（优先）
+        try:
+            from backend.services.mcp_travel_client import MCPTravelClient
+            self.mcp_client = MCPTravelClient()
+            import logging
+            logging.getLogger(__name__).info("MapService: MCP 客户端已启用")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"MapService: MCP 客户端初始化失败: {e}")
+            self.mcp_client = None
     
     def geocode_address(self, address):
-        """地址转坐标（优先使用 Geoapify，如果没有则使用 Nominatim）"""
-        # 优先使用 Geoapify
+        """地址转坐标（优先使用 MCP，如果没有则使用 Geoapify 或 Nominatim）"""
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                result = self.mcp_client.geocode_address(address)
+                if result and "error" not in result:
+                    return result
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"MCP 地理编码失败: {e}")
+        
+        # 2. 使用 Geoapify
         if self.geoapify_key:
             try:
                 url = f"{self.geoapify_url}/geocode/search"
@@ -53,8 +74,18 @@ class MapService:
         return None
     
     def calculate_route(self, from_lat, from_lng, to_lat, to_lng, mode="driving"):
-        """计算路线（优先使用 Geoapify，如果没有则使用 Google Maps API）"""
-        # 优先使用 Geoapify
+        """计算路线（优先使用 MCP，如果没有则使用 Geoapify 或 Google Maps API）"""
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                result = self.mcp_client.calculate_route(from_lat, from_lng, to_lat, to_lng, mode)
+                if result and "error" not in result:
+                    return result
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"MCP 路线计算失败: {e}")
+        
+        # 2. 使用 Geoapify
         if self.geoapify_key:
             try:
                 # Geoapify 路由模式映射
@@ -155,8 +186,18 @@ class MapService:
         }
     
     def get_places_nearby(self, lat, lng, radius=1000, type_filter=None):
-        """获取附近地点（优先使用 Geoapify，如果没有则使用 Google Places API）"""
-        # 优先使用 Geoapify
+        """获取附近地点（优先使用 MCP，如果没有则使用 Geoapify 或 Google Places API）"""
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                places = self.mcp_client.get_places_nearby(lat, lng, radius, type_filter)
+                if places:
+                    return places
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"MCP 获取附近地点失败: {e}")
+        
+        # 2. 使用 Geoapify
         if self.geoapify_key:
             try:
                 url = f"{self.geoapify_url}/places/radius"

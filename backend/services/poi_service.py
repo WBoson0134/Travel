@@ -15,10 +15,57 @@ class POIService:
     def __init__(self):
         # 使用外部旅游API服务
         self.travel_api_service = TravelAPIService()
+        # 尝试使用 MCP 客户端（优先）
+        try:
+            from backend.services.mcp_travel_client import MCPTravelClient
+            self.mcp_client = MCPTravelClient()
+            logger.info("MCP 旅游客户端已启用")
+        except Exception as e:
+            logger.warning(f"MCP 客户端初始化失败，使用回退方案: {e}")
+            self.mcp_client = None
+        
+        # 尝试导入 Google Places 服务
+        try:
+            from backend.services.google_places_service import GooglePlacesService
+            self.google_places = GooglePlacesService()
+            if self.google_places.is_available():
+                logger.info("Google Places 服务已启用")
+            else:
+                logger.warning("Google Places API key 未配置")
+                self.google_places = None
+        except ImportError:
+            logger.warning("Google Places 服务未找到，跳过")
+            self.google_places = None
     
     def get_pois_by_city(self, city: str, preferences: List[str] = None) -> List[Dict]:
         """根据城市从外部API获取POI列表"""
-        # 调用外部API获取景点
+        # 1. 优先使用 MCP 客户端（如果可用）
+        if self.mcp_client:
+            try:
+                attractions = self.mcp_client.search_attractions(city, preferences)
+                if attractions:
+                    logger.info(f"从 MCP 客户端获取到 {len(attractions)} 个景点")
+                    return attractions
+            except Exception as e:
+                logger.warning(f"MCP 客户端调用失败，回退到其他数据源: {e}")
+        
+        # 2. 使用 Google Places API（如果可用）
+        if self.google_places and self.google_places.is_available():
+            try:
+                places = self.google_places.search_by_preferences(
+                    city=city,
+                    preferences=preferences or [],
+                    max_results_per_pref=5
+                )
+                if places:
+                    # 转换 Google Places 格式到内部格式
+                    attractions = self._convert_google_places_to_pois(places)
+                    logger.info(f"从 Google Places 获取到 {len(attractions)} 个景点")
+                    return attractions
+            except Exception as e:
+                logger.warning(f"Google Places API 调用失败，回退到其他数据源: {e}")
+        
+        # 3. 回退到原有的外部API
         attractions = self.travel_api_service.search_attractions(city, preferences)
         
         if not attractions:
@@ -46,6 +93,60 @@ class POIService:
         
         # 如果没有匹配的，返回所有POI
         return filtered_pois if filtered_pois else attractions
+    
+    def _convert_google_places_to_pois(self, places: List[Dict]) -> List[Dict]:
+        """将 Google Places 格式转换为内部 POI 格式"""
+        pois = []
+        for place in places:
+            # 价格级别转换
+            price_level_map = {0: "$", 1: "$$", 2: "$$$", 3: "$$$$", 4: "$$$$$"}
+            price_range = price_level_map.get(place.get("price_level", 0), "$$")
+            
+            # 估算价格（基于价格级别）
+            price_estimate_map = {0: 0, 1: 50, 2: 150, 3: 300, 4: 500}
+            price_estimate = price_estimate_map.get(place.get("price_level", 0), 100)
+            
+            # 类型转换
+            place_type = place.get("type", "tourist_attraction")
+            type_mapping = {
+                "tourist_attraction": "景点",
+                "museum": "博物馆",
+                "park": "公园",
+                "restaurant": "餐厅",
+                "shopping_mall": "购物",
+                "church": "宗教",
+                "temple": "宗教",
+            }
+            poi_type = type_mapping.get(place_type, "景点")
+            
+            # 构建标签
+            tags = []
+            if place.get("rating", 0) >= 4.5:
+                tags.append("热门")
+            if place.get("user_ratings_total", 0) > 1000:
+                tags.append("推荐")
+            matched_pref = place.get("matched_preference")
+            if matched_pref:
+                tags.append(matched_pref)
+            
+            poi = {
+                "name": place.get("name", ""),
+                "type": poi_type,
+                "address": place.get("formatted_address", ""),
+                "latitude": place.get("latitude"),
+                "longitude": place.get("longitude"),
+                "rating": place.get("rating", 0),
+                "user_ratings_total": place.get("user_ratings_total", 0),
+                "price_range": price_range,
+                "price_estimate": price_estimate,
+                "tags": tags,
+                "description": place.get("description", ""),
+                "place_id": place.get("place_id", ""),
+                "source": "google_places"
+            }
+            pois.append(poi)
+        
+        return pois
 
     def _load_local_pois(self, city: str) -> List[Dict]:
         """从本地数据集中加载POI，作为外部API的回退方案"""

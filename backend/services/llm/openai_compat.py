@@ -48,14 +48,14 @@ class OpenAICompat(LLMClient):
             if force_json and "openai.com" in self.base_url:
                 payload["response_format"] = {"type": "json_object"}
         
-        # 对429错误进行指数退避重试
+        # 对429错误和网络错误进行指数退避重试
         import asyncio
         import random
-        max_retries = 2
+        max_retries = 3  # 增加重试次数
         backoff = 1.0
         
         for attempt in range(max_retries):
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=60) as client:  # 增加超时时间到60秒
                 try:
                     r = await client.post(url, headers=headers, json=payload)
                 except httpx.RequestError as exc:

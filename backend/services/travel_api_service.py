@@ -23,13 +23,26 @@ class TravelAPIService:
         self.tripadvisor_api_key = Config.TRIPADVISOR_API_KEY
         self.tripadvisor_api_url = Config.TRIPADVISOR_API_URL or "https://api.tripadvisor.com/api"
         
+        # 尝试使用 MCP 客户端（优先）
+        try:
+            from backend.services.mcp_travel_client import MCPTravelClient
+            self.mcp_client = MCPTravelClient()
+            logger.info("TravelAPIService: MCP 客户端已启用")
+        except Exception as e:
+            logger.warning(f"TravelAPIService: MCP 客户端初始化失败: {e}")
+            self.mcp_client = None
+        
     def _get_amadeus_token(self) -> Optional[str]:
         """获取Amadeus API访问令牌"""
         if not self.amadeus_api_key or not self.amadeus_api_secret:
+            logger.warning("Amadeus API key 或 secret 未配置")
             return None
         
         try:
-            url = f"{self.amadeus_api_url}/security/oauth2/token"
+            # Amadeus API token 端点（注意：不需要 /v1 前缀）
+            base_url = self.amadeus_api_url.rstrip("/v1").rstrip("/")
+            url = f"{base_url}/v1/security/oauth2/token"
+            
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded"
             }
@@ -39,11 +52,23 @@ class TravelAPIService:
                 "client_secret": self.amadeus_api_secret
             }
             
+            logger.info(f"请求 Amadeus token: {url}")
             response = requests.post(url, headers=headers, data=data, timeout=10)
+            
             if response.status_code == 200:
-                return response.json().get("access_token")
+                token = response.json().get("access_token")
+                if token:
+                    logger.info("成功获取 Amadeus token")
+                    return token
+                else:
+                    logger.error("Amadeus token 响应中未找到 access_token")
+            else:
+                logger.error(f"Amadeus token 请求失败: {response.status_code} - {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Amadeus token 请求异常: {e}")
         except Exception as e:
-            logger.error(f"获取Amadeus token失败: {e}")
+            logger.error(f"获取Amadeus token失败: {e}", exc_info=True)
         
         return None
     
@@ -64,7 +89,17 @@ class TravelAPIService:
         """
         hotels = []
         
-        # 尝试使用Booking.com API
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                hotels = self.mcp_client.search_hotels(city, check_in, check_out, adults, rooms)
+                if hotels:
+                    logger.info(f"从 MCP 客户端获取到 {len(hotels)} 个酒店")
+                    return hotels
+            except Exception as e:
+                logger.warning(f"MCP 客户端调用失败: {e}")
+        
+        # 2. 尝试使用Booking.com API
         if self.booking_api_key:
             try:
                 hotels = self._search_hotels_booking(city, check_in, check_out, adults, rooms)
@@ -73,14 +108,15 @@ class TravelAPIService:
             except Exception as e:
                 logger.warning(f"Booking.com API调用失败: {e}")
         
-        # 尝试使用Amadeus API
-        if self.amadeus_api_key:
+        # 3. 尝试使用Amadeus API
+        if self.amadeus_api_key and self.amadeus_api_secret:
             try:
                 hotels = self._search_hotels_amadeus(city, check_in, check_out, adults, rooms)
                 if hotels:
+                    logger.info(f"从 Amadeus API 获取到 {len(hotels)} 个酒店")
                     return hotels
             except Exception as e:
-                logger.warning(f"Amadeus API调用失败: {e}")
+                logger.warning(f"Amadeus API调用失败: {e}", exc_info=True)
         
         # 如果没有API或调用失败，返回空列表
         logger.warning(f"无法获取{city}的酒店信息，请配置API密钥")
@@ -135,11 +171,16 @@ class TravelAPIService:
         }
         
         try:
+            logger.info(f"搜索 Amadeus 酒店: city={city}, cityCode={city_code}")
             response = requests.get(url, headers=headers, params=params, timeout=10)
+            
             if response.status_code == 200:
                 data = response.json()
+                hotels_data = data.get("data", [])
+                logger.info(f"Amadeus 返回 {len(hotels_data)} 个酒店")
+                
                 hotels = []
-                for hotel in data.get("data", [])[:10]:  # 限制返回10个
+                for hotel in hotels_data[:10]:  # 限制返回10个
                     hotels.append({
                         "name": hotel.get("name", ""),
                         "hotel_id": hotel.get("hotelId", ""),
@@ -150,8 +191,12 @@ class TravelAPIService:
                         "address": hotel.get("address", {}).get("lines", [""])[0] if hotel.get("address") else ""
                     })
                 return hotels
+            else:
+                logger.error(f"Amadeus 酒店搜索失败: {response.status_code} - {response.text}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Amadeus API 请求异常: {e}")
         except Exception as e:
-            logger.error(f"Amadeus API错误: {e}")
+            logger.error(f"Amadeus API错误: {e}", exc_info=True)
         
         return []
     
@@ -171,13 +216,24 @@ class TravelAPIService:
         }
         
         try:
+            logger.info(f"获取 Amadeus 城市代码: {city}")
             response = requests.get(url, headers=headers, params=params, timeout=10)
+            
             if response.status_code == 200:
                 data = response.json()
-                if data.get("data") and len(data["data"]) > 0:
-                    return data["data"][0].get("iataCode")
+                locations = data.get("data", [])
+                if locations:
+                    city_code = locations[0].get("iataCode")
+                    logger.info(f"找到城市代码: {city_code}")
+                    return city_code
+                else:
+                    logger.warning(f"未找到城市 {city} 的代码")
+            else:
+                logger.error(f"获取城市代码失败: {response.status_code} - {response.text}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"获取城市代码请求异常: {e}")
         except Exception as e:
-            logger.error(f"获取城市代码失败: {e}")
+            logger.error(f"获取城市代码失败: {e}", exc_info=True)
         
         return None
     
@@ -194,7 +250,17 @@ class TravelAPIService:
         """
         attractions = []
         
-        # 尝试使用TripAdvisor API
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                attractions = self.mcp_client.search_attractions(city, preferences)
+                if attractions:
+                    logger.info(f"从 MCP 客户端获取到 {len(attractions)} 个景点")
+                    return attractions
+            except Exception as e:
+                logger.warning(f"MCP 客户端调用失败: {e}")
+        
+        # 2. 尝试使用TripAdvisor API
         if self.tripadvisor_api_key:
             try:
                 attractions = self._search_attractions_tripadvisor(city, preferences)
@@ -259,14 +325,25 @@ class TravelAPIService:
         """
         flights = []
         
-        # 使用Amadeus API搜索航班
-        if self.amadeus_api_key:
+        # 1. 优先使用 MCP 客户端
+        if self.mcp_client:
+            try:
+                flights = self.mcp_client.search_flights(origin, destination, departure_date, return_date, adults)
+                if flights:
+                    logger.info(f"从 MCP 客户端获取到 {len(flights)} 个航班")
+                    return flights
+            except Exception as e:
+                logger.warning(f"MCP 客户端调用失败: {e}")
+        
+        # 2. 使用Amadeus API搜索航班
+        if self.amadeus_api_key and self.amadeus_api_secret:
             try:
                 flights = self._search_flights_amadeus(origin, destination, departure_date, return_date, adults)
                 if flights:
+                    logger.info(f"从 Amadeus API 获取到 {len(flights)} 个航班")
                     return flights
             except Exception as e:
-                logger.warning(f"Amadeus API调用失败: {e}")
+                logger.warning(f"Amadeus API调用失败: {e}", exc_info=True)
         
         return []
     
@@ -293,11 +370,16 @@ class TravelAPIService:
             params["returnDate"] = return_date
         
         try:
+            logger.info(f"搜索 Amadeus 航班: {origin} -> {destination}, {departure_date}")
             response = requests.get(url, headers=headers, params=params, timeout=10)
+            
             if response.status_code == 200:
                 data = response.json()
+                offers = data.get("data", [])
+                logger.info(f"Amadeus 返回 {len(offers)} 个航班")
+                
                 flights = []
-                for offer in data.get("data", []):
+                for offer in offers:
                     flight = offer.get("itineraries", [{}])[0]
                     segments = flight.get("segments", [])
                     if segments:
@@ -318,8 +400,12 @@ class TravelAPIService:
                             "stops": len(segments) - 1
                         })
                 return flights
+            else:
+                logger.error(f"Amadeus 航班搜索失败: {response.status_code} - {response.text}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Amadeus 航班搜索请求异常: {e}")
         except Exception as e:
-            logger.error(f"Amadeus航班搜索错误: {e}")
+            logger.error(f"Amadeus航班搜索错误: {e}", exc_info=True)
         
         return []
 

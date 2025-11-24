@@ -119,6 +119,10 @@ class AIService:
                     metrics["llm_calls"] += 1
                     if enriched:
                         enhanced_days.append(enriched)
+                    else:
+                        # 如果返回空，使用原始数据
+                        self.logger.warning("Day %s enhancement returned empty, using base data", day.get('day_number'))
+                        enhanced_days.append(self._enhance_base_day(day, city))
                 except Exception as day_exc:  # pragma: no cover - 防御性
                     self.logger.error("LLM day enhancement failed (day=%s): %s", day.get('day_number'), day_exc, exc_info=True)
                     metrics["day_durations"].append({
@@ -126,6 +130,8 @@ class AIService:
                         "duration": time.time() - day_start,
                         "error": str(day_exc)
                     })
+                    # 即使失败，也保留基础数据并尝试简单增强
+                    enhanced_days.append(self._enhance_base_day(day, city))
 
             ai_plan = {}
             if plan_meta:
@@ -292,26 +298,44 @@ class AIService:
         payload_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
         system_prompt = (
-            "你是一名资深旅行策划顾问，擅长为用户提供有洞察力的行程概要。"
-            "请基于草案为用户写一个总体简介、每日亮点概述以及3-5条贴士。"
+            "你是一名资深旅行策划顾问和文案专家，擅长撰写吸引人、详细的旅行介绍。"
+            "你的任务是：\n"
+            "1. 撰写生动的总体概述（150-200字），突出城市特色和行程亮点\n"
+            "2. 为每一天生成详细的亮点描述（每段50-80字）\n"
+            "3. 提供5-8条实用贴士，涵盖交通、美食、购物、注意事项等\n"
+            "4. 使用生动的语言，让读者产生向往之情"
         )
         user_prompt = (
-            "请根据以下数据生成旅行概要，并返回 JSON：\n"
+            "请根据以下数据生成详细的旅行概要，返回 JSON：\n"
             f"{payload_str}\n\n"
             "输出格式：{\n"
-            '  "summary": "总体概述",\n'
-            '  "daily_highlights": [ {"day_number": 1, "highlight": "..."} ],\n'
-            '  "tips": ["..."]\n'
+            '  "summary": "总体概述（150-200字）：介绍城市特色、行程亮点、适合人群、最佳体验等",\n'
+            '  "daily_highlights": [\n'
+            '    {"day_number": 1, "highlight": "第1天详细亮点（50-80字）：描述当天的主题、主要活动、体验价值"},\n'
+            '    {"day_number": 2, "highlight": "第2天详细亮点（50-80字）"}\n'
+            '  ],\n'
+            '  "tips": [\n'
+            '    "实用贴士1（交通、美食、购物、注意事项等）",\n'
+            '    "实用贴士2",\n'
+            '    "实用贴士3",\n'
+            '    "实用贴士4",\n'
+            '    "实用贴士5"\n'
+            '  ]\n'
             "}\n"
-            "如果有推荐酒店，可在 tips 中体现。请勿输出除 JSON 以外的任何文字。"
+            "重要要求：\n"
+            "1. summary 必须详细（150-200字），包含城市特色、行程亮点、适合人群\n"
+            "2. 每天的 highlight 要具体生动（50-80字），描述主要活动和体验\n"
+            "3. tips 要实用具体，涵盖交通、美食、购物、注意事项、最佳时间等\n"
+            "4. 如果有推荐酒店，在 tips 中提及\n"
+            "5. 使用吸引人的语言，让读者产生向往"
         )
         user_prompt += (
             "务必仅返回一个合法的 JSON 对象，不要附带 Markdown、注释或额外说明。"
         )
         if placeholder_mode:
             user_prompt += (
-                " placeholder 为 true 表示当前只是占位草案，请结合城市和偏好重新规划真实景点，"
-                "并仅以 JSON 对象形式返回。"
+                " placeholder 为 true 表示当前只是占位草案，请结合城市特色和用户偏好，"
+                "重新规划真实、吸引人的景点和体验，并生成详细描述。"
             )
 
         response_text = self._chat(system_prompt, user_prompt, temperature=0.55, force_json=True)
@@ -373,35 +397,52 @@ class AIService:
         payload_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
         system_prompt = (
-            "你是一位专业的旅行日程设计师，擅长润色现有行程。"
-            "请基于提供的活动顺序，优化描述并提供贴心提醒。"
+            "你是一位资深旅行策划师和文案专家，擅长撰写生动、详细、吸引人的旅行体验描述。"
+            "你的描述应该：\n"
+            "1. 详细描述景点的特色、亮点和体验价值（至少80-120字）\n"
+            "2. 包含具体的体验内容、适合人群、最佳游览时间\n"
+            "3. 提供实用的贴士和建议（拍照点、注意事项等）\n"
+            "4. 使用生动的语言，让读者产生身临其境的感觉\n"
+            "5. 为每个活动生成3-5个相关标签\n"
+            "6. 提供合理的价格估算（基于活动类型和城市消费水平）"
         )
         user_prompt = (
-            "请根据以下行程草案，输出 JSON：\n"
+            "请根据以下行程草案，生成详细的旅行日程，输出 JSON：\n"
             f"{payload_str}\n\n"
             "输出格式：{\n"
             '  "day_number": 1,\n'
-            '  "description": "当日概述",\n'
-            '  "theme": "主题",\n'
-            '  "tips": ["..."],\n'
+            '  "description": "当日详细概述（至少50字，描述当天的主题和亮点）",\n'
+            '  "theme": "当日主题（如：文化探索、自然风光、美食体验等）",\n'
+            '  "tips": ["实用贴士1", "实用贴士2", "实用贴士3"],\n'
             '  "activities": [\n'
             '    {\n'
-            '      "name": "...",\n'
-            '      "start_time": "...",\n'
-            '      "end_time": "...",\n'
-            '      "description": "优化后的描述",\n'
-            '      "tags": ["..."],\n'
+            '      "name": "活动名称",\n'
+            '      "start_time": "09:00",\n'
+            '      "end_time": "11:00",\n'
+            '      "description": "详细描述（80-120字）：包含景点特色、体验内容、适合人群、亮点、拍照建议等",\n'
+            '      "tags": ["标签1", "标签2", "标签3", "标签4"],\n'
             '      "price_estimate": 100,\n'
+            '      "price_range": "$$",\n'
+            '      "rating": 4.5,\n'
+            '      "address": "详细地址",\n'
+            '      "tips": ["小贴士1", "小贴士2"],\n'
             '      "order": 1\n'
             "    }\n"
             "  ]\n"
             "}\n"
-            "请保持原有顺序，如无特别说明无需调整时间。"
+            "重要要求：\n"
+            "1. 每个活动的 description 必须详细（80-120字），包含具体体验内容\n"
+            "2. 每个活动至少3-5个相关标签\n"
+            "3. 提供合理的价格估算（基于活动类型）\n"
+            "4. 为每个活动添加2-3条实用小贴士\n"
+            "5. 当日 description 要生动有趣，至少50字\n"
+            "6. 保持原有活动顺序和时间安排"
         )
         user_prompt += "务必仅返回一个合法 JSON 对象，禁止输出 Markdown 代码块或额外文字。"
         if placeholder_mode:
             user_prompt += (
-                " 当前活动为占位，请结合城市和偏好设计真实的体验，并补充吸引人的描述、贴士与价格建议。"
+                " 当前活动为占位，请结合城市特色和用户偏好，设计真实、吸引人的体验，"
+                "并生成详细描述、实用贴士和合理价格建议。"
             )
 
         response_text = self._chat(system_prompt, user_prompt, temperature=0.6, force_json=True)
@@ -417,7 +458,120 @@ class AIService:
             )
             raise
         result.setdefault("day_number", day.get("day_number"))
+        
+        # 增强活动信息：确保每个活动都有完整的字段
+        for activity in result.get("activities", []):
+            # 从原始数据中补充缺失字段
+            if day.get("activities"):
+                for orig_act in day.get("activities", []):
+                    if orig_act.get("name") == activity.get("name"):
+                        # 补充地址和坐标
+                        if not activity.get("address"):
+                            activity["address"] = orig_act.get("address", "")
+                        if not activity.get("latitude"):
+                            activity["latitude"] = orig_act.get("latitude")
+                        if not activity.get("longitude"):
+                            activity["longitude"] = orig_act.get("longitude")
+                        # 补充评分
+                        if not activity.get("rating"):
+                            activity["rating"] = orig_act.get("rating", 4.5)
+                        # 补充价格
+                        if not activity.get("price_estimate"):
+                            activity["price_estimate"] = orig_act.get("price_estimate", 50)
+                        break
+            
+            # 确保有评分
+            if not activity.get("rating"):
+                activity["rating"] = 4.5
+            
+            # 确保有价格范围
+            if not activity.get("price_range"):
+                price = activity.get("price_estimate", 0)
+                if price == 0:
+                    activity["price_range"] = "免费"
+                elif price < 50:
+                    activity["price_range"] = "$"
+                elif price < 150:
+                    activity["price_range"] = "$$"
+                elif price < 300:
+                    activity["price_range"] = "$$$"
+                else:
+                    activity["price_range"] = "$$$$"
+            
+            # 确保有足够的标签（至少3个）
+            tags = activity.get("tags", [])
+            if len(tags) < 3:
+                name = activity.get("name", "").lower()
+                desc = activity.get("description", "").lower()
+                
+                # 根据关键词自动添加标签
+                tag_keywords = {
+                    "文化": ["文化", "历史", "博物馆", "艺术", "展览", "古迹"],
+                    "自然": ["自然", "公园", "海滩", "山", "湖", "风景", "生态"],
+                    "美食": ["美食", "餐厅", "小吃", "特色", "品尝", "料理"],
+                    "购物": ["购物", "市场", "商店", "纪念品", "特产"],
+                    "娱乐": ["娱乐", "表演", "演出", "体验", "互动", "活动"],
+                    "亲子": ["亲子", "家庭", "儿童", "适合", "孩子"],
+                    "摄影": ["摄影", "拍照", "风景", "美景", "打卡"],
+                    "放松": ["放松", "休闲", "悠闲", "舒适", "惬意"],
+                    "历史": ["历史", "古迹", "遗址", "传统", "文化"],
+                    "现代": ["现代", "时尚", "潮流", "都市", "商业"]
+                }
+                
+                for tag, keywords in tag_keywords.items():
+                    if tag not in tags and any(kw in name or kw in desc for kw in keywords):
+                        tags.append(tag)
+                        if len(tags) >= 5:
+                            break
+                
+                # 如果还不够，添加通用标签
+                if len(tags) < 3:
+                    tags.extend(["推荐", "热门", "必游"])
+                
+                activity["tags"] = tags[:5]  # 最多5个标签
+            
+            # 确保描述足够详细（如果太短，提示需要增强）
+            desc = activity.get("description", "")
+            if len(desc) < 50:
+                self.logger.warning(f"活动 {activity.get('name')} 的描述太短: {len(desc)}字")
+        
         return result
+    
+    def _enhance_base_day(self, day: Dict[str, Any], city: str) -> Dict[str, Any]:
+        """在AI增强失败时，对基础数据进行简单增强"""
+        enhanced_day = {
+            "day_number": day.get("day_number"),
+            "description": day.get("description") or f"探索{city}的魅力，体验这座城市的独特风情。",
+            "theme": day.get("theme") or "探索",
+            "tips": day.get("tips", []),
+            "activities": []
+        }
+        
+        # 增强每个活动
+        for act in day.get("activities", []):
+            enhanced_act = {
+                "name": act.get("name", ""),
+                "start_time": act.get("start_time", "09:00"),
+                "end_time": act.get("end_time", "11:00"),
+                "description": act.get("description") or f"{act.get('name', '活动')}是{city}的一个精彩体验，值得一游。",
+                "tags": act.get("tags", []) or ["推荐", "热门"],
+                "price_estimate": act.get("price_estimate", 50),
+                "price_range": act.get("price_range") or "$$",
+                "rating": act.get("rating", 4.5),
+                "address": act.get("address", ""),
+                "latitude": act.get("latitude"),
+                "longitude": act.get("longitude"),
+                "order": act.get("order", len(enhanced_day["activities"]) + 1)
+            }
+            
+            # 确保有足够的标签
+            if len(enhanced_act["tags"]) < 3:
+                enhanced_act["tags"].extend(["推荐", "热门", "必游"])
+            enhanced_act["tags"] = enhanced_act["tags"][:5]
+            
+            enhanced_day["activities"].append(enhanced_act)
+        
+        return enhanced_day
 
     def _chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, force_json: bool = False) -> str:
         if not self.llm_client:
